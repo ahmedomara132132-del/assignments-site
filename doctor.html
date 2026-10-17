@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>لوحة الدكتور</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>لوحة الدكتور</h1>
+    <p>إضافة أسيجنمنتات ومتابعة إجابات الطلاب</p>
+  </header>
+
+  <div id="demoBanner" class="banner demo">وضع تجريبي: أي كود هيدخلك، والبيانات بتتمسح لما تقفل التاب.</div>
+
+  <!-- تسجيل الدخول -->
+  <div id="viewLogin" class="card">
+    <h2>تسجيل الدخول</h2>
+    <form id="loginForm" novalidate>
+      <div class="field">
+        <label for="code">كود الدخول</label>
+        <input id="code" type="password" autocomplete="current-password" placeholder="الكود السري">
+        <p class="err" id="err-code"></p>
+      </div>
+      <button type="submit" class="btn" id="loginBtn">دخول</button>
+    </form>
+  </div>
+
+  <!-- اللوحة -->
+  <div id="viewDash" hidden>
+    <div class="topbar">
+      <strong>أهلًا يا دكتور</strong>
+      <button type="button" class="link-btn" id="logoutBtn">خروج</button>
+    </div>
+
+    <div id="notice" class="banner" role="status"></div>
+
+    <div class="card">
+      <h2>إضافة أسيجنمنت جديد</h2>
+      <form id="createForm" novalidate>
+        <div class="field">
+          <label for="title">العنوان</label>
+          <input id="title" type="text" maxlength="100" placeholder="مثال: Leda and the Swan">
+          <p class="err" id="err-title"></p>
+        </div>
+        <div class="field">
+          <label for="question">نص السؤال</label>
+          <textarea id="question" class="short" maxlength="3000" placeholder="اكتب السؤال اللي الطلاب هيجاوبوا عليه"></textarea>
+          <p class="err" id="err-question"></p>
+        </div>
+        <div class="field">
+          <label for="deadline">آخر موعد للتسليم (اختياري)</label>
+          <input id="deadline" type="datetime-local">
+          <p class="hint">لو سيبتها فاضية التسليم هيفضل مفتوح.</p>
+        </div>
+        <button type="submit" class="btn" id="createBtn">إضافة</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="topbar">
+        <h2 style="margin:0">الأسيجنمنتات</h2>
+        <button type="button" class="link-btn" id="refreshBtn">تحديث</button>
+      </div>
+      <div id="list"></div>
+    </div>
+  </div>
+
+  <!-- إجابة الدكتور -->
+  <div id="viewAnswer" class="card" hidden>
+    <div class="topbar">
+      <button type="button" class="link-btn" id="ansBackBtn">← رجوع</button>
+    </div>
+    <h2>إجابة الدكتور</h2>
+    <form id="ansForm" novalidate>
+      <div class="question">
+        <small id="ansTitle">السؤال</small>
+        <strong id="ansQuestion" dir="auto"></strong>
+      </div>
+      <div id="ansNotice" class="banner" role="status"></div>
+      <div class="field">
+        <label for="ansCode">الرقم السري</label>
+        <input id="ansCode" type="password" autocomplete="off" placeholder="نفس كود الدخول">
+        <p class="err" id="err-ansCode"></p>
+      </div>
+      <div class="field">
+        <label for="ansText">الإجابة</label>
+        <textarea id="ansText" placeholder="اكتب إجابتك على السؤال..."></textarea>
+        <div class="counter"><span id="ansCount">0</span> / <span id="ansMax"></span></div>
+        <p class="err" id="err-ansText"></p>
+      </div>
+      <button type="submit" class="btn" id="ansBtn">إرسال</button>
+    </form>
+  </div>
+
+  <!-- إجابات أسيجنمنت -->
+  <div id="viewSubs" class="card" hidden>
+    <div class="topbar">
+      <button type="button" class="link-btn" id="backBtn">← رجوع</button>
+      <span class="meta" id="subsCount"></span>
+    </div>
+    <h2 id="subsTitle"></h2>
+    <div id="subsList"></div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+(function () {
+  var CFG = window.APP_CONFIG, Api = window.Api, h = window.h, fmtDate = window.fmtDate;
+  var $ = function (id) { return document.getElementById(id); };
+  var adminCode = null;
+  var assignments = [];
+
+  if (Api.demo) $("demoBanner").classList.add("show");
+
+  try { adminCode = sessionStorage.getItem("adminCode"); } catch (e) { /* ok */ }
+
+  function saveCode(c) {
+    adminCode = c;
+    try { sessionStorage.setItem("adminCode", c); } catch (e) { /* ok */ }
+  }
+  function clearCode() {
+    adminCode = null;
+    try { sessionStorage.removeItem("adminCode"); } catch (e) { /* ok */ }
+  }
+
+  var VIEWS = ["viewLogin", "viewDash", "viewSubs", "viewAnswer"];
+  function show(v) { VIEWS.forEach(function (x) { $(x).hidden = x !== v; }); }
+
+  function notice(text, kind) {
+    var n = $("notice");
+    n.textContent = text || "";
+    n.className = "banner" + (text ? " show " + (kind || "ok") : "");
+  }
+
+  function errText(e) {
+    if (e && e.message === "NOT_CONFIGURED") return "الـ webhook لسه مش متظبط. حط اللينك في ملف config.js.";
+    if (e && e.name === "AbortError") return "الاتصال أخد وقت طويل. جرّب تاني.";
+    return "حصلت مشكلة في الاتصال. جرّب تاني.";
+  }
+
+  // كل طلب إداري بيبعت الكود، والـ n8n هو اللي بيتحقق منه.
+  async function admin(body) {
+    body.adminCode = adminCode;
+    var r = await Api.call(body);
+    if (r && r.ok === false && r.error === "unauthorized") {
+      logout("الكود غلط أو انتهت الجلسة، ادخل تاني.");
+      throw new Error("UNAUTHORIZED");
+    }
+    return r;
+  }
+
+  // ---------- تسجيل الدخول ----------
+  function logout(msg) {
+    clearCode();
+    $("code").value = "";
+    $("err-code").textContent = msg || "";
+    show("viewLogin");
+  }
+
+  $("loginForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var code = $("code").value.trim();
+    if (!code) { $("err-code").textContent = "اكتب الكود."; return; }
+    $("err-code").textContent = "";
+    var btn = $("loginBtn");
+    btn.disabled = true; btn.textContent = "جاري التحقق...";
+    try {
+      var r = await Api.call({ action: "adminCheck", adminCode: code });
+      if (r.ok === true) {
+        saveCode(code);
+        await enterDash();
+      } else {
+        $("err-code").textContent = r.message || "الكود غير صحيح.";
+      }
+    } catch (err) {
+      $("err-code").textContent = errText(err);
+    } finally {
+      btn.disabled = false; btn.textContent = "دخول";
+    }
+  });
+
+  $("logoutBtn").addEventListener("click", function () { logout(""); });
+
+  async function enterDash() {
+    notice("");
+    show("viewDash");
+    await loadList();
+  }
+
+  // ---------- قايمة الأسيجنمنتات ----------
+  function studentLink(id) {
+    var u = new URL("./", location.href);
+    u.search = "";
+    u.searchParams.set("a", id);
+    if (Api.demo) u.searchParams.set("demo", "1");
+    return u.href;
+  }
+
+  async function copyLink(id, btn) {
+    var link = studentLink(id);
+    try {
+      await navigator.clipboard.writeText(link);
+      var old = btn.textContent;
+      btn.textContent = "اتنسخ ✓";
+      setTimeout(function () { btn.textContent = old; }, 1500);
+    } catch (e) {
+      window.prompt("انسخ اللينك:", link);
+    }
+  }
+
+  function renderList() {
+    var box = $("list");
+    box.textContent = "";
+    if (!assignments.length) {
+      box.appendChild(h("p", { class: "empty", text: "لسه مفيش أسيجنمنتات. أضف أول واحد من فوق." }));
+      return;
+    }
+    assignments.forEach(function (a) {
+      var kids = [h("h3", { text: a.title || "أسيجنمنت" })];
+      if (a.question) {
+        var q = a.question.length > 140 ? a.question.slice(0, 140) + "…" : a.question;
+        kids.push(h("p", { dir: "auto", text: q }));
+      }
+      if (a.deadline) kids.push(h("div", { class: "meta", text: "آخر موعد: " + fmtDate(a.deadline) }));
+      var copyBtn = h("button", { type: "button", class: "btn small secondary", text: "نسخ لينك الطلاب" });
+      copyBtn.addEventListener("click", function () { copyLink(a.id, copyBtn); });
+      var viewBtn = h("button", { type: "button", class: "btn small", text: "عرض الإجابات" });
+      viewBtn.addEventListener("click", function () { openSubs(a); });
+      var ansBtn = h("button", { type: "button", class: "btn small secondary", text: "إجابة الدكتور" });
+      ansBtn.addEventListener("click", function () { openAnswer(a); });
+      kids.push(h("div", { class: "actions" }, [copyBtn, viewBtn, ansBtn]));
+      box.appendChild(h("div", { class: "item" }, kids));
+    });
+  }
+
+  async function loadList() {
+    $("list").textContent = "";
+    $("list").appendChild(h("p", { class: "empty", text: "جاري التحميل..." }));
+    try {
+      var r = await admin({ action: "listAssignments" });
+      if (r.ok !== true || !Array.isArray(r.assignments)) throw new Error("BAD_RESPONSE");
+      assignments = r.assignments;
+      renderList();
+    } catch (e) {
+      if (e.message === "UNAUTHORIZED") return;
+      $("list").textContent = "";
+      $("list").appendChild(h("p", { class: "empty", text: e.message === "BAD_RESPONSE" ? "الـ n8n رجّع رد مش متوقع. راجع API.md." : errText(e) }));
+    }
+  }
+  $("refreshBtn").addEventListener("click", loadList);
+
+  // ---------- إضافة أسيجنمنت ----------
+  function newId() {
+    var bytes = new Uint8Array(5);
+    crypto.getRandomValues(bytes);
+    return Array.prototype.map.call(bytes, function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+  }
+
+  $("createForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var title = $("title").value.trim();
+    var question = $("question").value.trim();
+    var ok = true;
+    $("err-title").textContent = "";
+    $("err-question").textContent = "";
+    if (title.length < 3) { $("err-title").textContent = "اكتب عنوان (3 حروف على الأقل)."; ok = false; }
+    if (question.length < 5) { $("err-question").textContent = "اكتب نص السؤال."; ok = false; }
+    if (!ok) return;
+
+    var dl = $("deadline").value;
+    var assignment = {
+      id: newId(),
+      title: title,
+      question: question,
+      deadline: dl ? new Date(dl).toISOString() : null
+    };
+
+    var btn = $("createBtn");
+    btn.disabled = true; btn.textContent = "جاري الإضافة...";
+    try {
+      var r = await admin({ action: "createAssignment", assignment: assignment });
+      if (r.ok === false) {
+        notice(r.message || "ماقدرناش نضيف الأسيجنمنت.", "error");
+      } else {
+        $("createForm").reset();
+        notice("تمت الإضافة. تقدر تنسخ لينك الطلاب من القايمة تحت.", "ok");
+        await loadList();
+      }
+    } catch (err) {
+      if (err.message !== "UNAUTHORIZED") notice(errText(err), "error");
+    } finally {
+      btn.disabled = false; btn.textContent = "إضافة";
+    }
+  });
+
+  // ---------- الإجابات ----------
+  async function openSubs(a) {
+    $("subsTitle").textContent = a.title || "أسيجنمنت";
+    $("subsCount").textContent = "";
+    var box = $("subsList");
+    box.textContent = "";
+    box.appendChild(h("p", { class: "empty", text: "جاري التحميل..." }));
+    show("viewSubs");
+    try {
+      var r = await admin({ action: "listSubmissions", assignmentId: a.id });
+      if (r.ok !== true || !Array.isArray(r.submissions)) throw new Error("BAD_RESPONSE");
+      var subs = r.submissions.slice().sort(function (x, y) {
+        return new Date(y.submittedAt).getTime() - new Date(x.submittedAt).getTime();
+      });
+      $("subsCount").textContent = subs.length + " إجابة";
+      box.textContent = "";
+      if (!subs.length) {
+        box.appendChild(h("p", { class: "empty", text: "لسه حد ماسلّمش." }));
+        return;
+      }
+      subs.forEach(function (s) {
+        // نص الطالب بيتعرض كنص عادي بس (textContent)، عمره ما بيتفسّر كـ HTML.
+        box.appendChild(h("details", { class: "sub" }, [
+          h("summary", {}, [
+            h("span", { text: s.fullName || "—" }),
+            h("span", { class: "when", text: s.submittedAt ? fmtDate(s.submittedAt) : "" })
+          ]),
+          h("div", { class: "answer", dir: "auto", text: s.answer || "" })
+        ]));
+      });
+    } catch (e) {
+      if (e.message === "UNAUTHORIZED") return;
+      box.textContent = "";
+      box.appendChild(h("p", { class: "empty", text: e.message === "BAD_RESPONSE" ? "الـ n8n رجّع رد مش متوقع. راجع API.md." : errText(e) }));
+    }
+  }
+  $("backBtn").addEventListener("click", function () { show("viewDash"); });
+
+  // ---------- إجابة الدكتور على السؤال ----------
+  var ansCurrent = null;
+
+  function ansNotice(text, kind) {
+    var n = $("ansNotice");
+    n.textContent = text || "";
+    n.className = "banner" + (text ? " show " + (kind || "ok") : "");
+  }
+
+  function openAnswer(a) {
+    ansCurrent = a;
+    $("ansTitle").textContent = a.title || "السؤال";
+    $("ansQuestion").textContent = a.question || "";
+    $("ansCode").value = "";
+    $("ansText").value = "";
+    $("ansCount").textContent = "0";
+    $("ansMax").textContent = CFG.MAX_ANSWER;
+    $("err-ansCode").textContent = "";
+    $("err-ansText").textContent = "";
+    ansNotice("");
+    show("viewAnswer");
+  }
+
+  $("ansText").addEventListener("input", function () { $("ansCount").textContent = $("ansText").value.length; });
+  $("ansBackBtn").addEventListener("click", function () { show("viewDash"); });
+
+  $("ansForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    if (!ansCurrent) return;
+    var code = $("ansCode").value.trim();
+    var text = $("ansText").value.trim();
+    var ok = true;
+    $("err-ansCode").textContent = "";
+    $("err-ansText").textContent = "";
+    ansNotice("");
+    if (!code) { $("err-ansCode").textContent = "اكتب الرقم السري."; ok = false; }
+    if (!text) { $("err-ansText").textContent = "اكتب الإجابة."; ok = false; }
+    else if (text.length < CFG.MIN_ANSWER) { $("err-ansText").textContent = "الإجابة قصيرة جدًا (على الأقل " + CFG.MIN_ANSWER + " حرف)."; ok = false; }
+    else if (text.length > CFG.MAX_ANSWER) { $("err-ansText").textContent = "الإجابة طويلة جدًا (الحد الأقصى " + CFG.MAX_ANSWER + " حرف)."; ok = false; }
+    if (!ok) return;
+
+    var btn = $("ansBtn");
+    btn.disabled = true; btn.textContent = "جاري الإرسال...";
+    try {
+      // بنبعت الرقم السري اللي اتكتب في الفورم، والـ n8n هو اللي بيتحقق منه.
+      var r = await Api.call({
+        action: "submitDoctorAnswer",
+        assignmentId: ansCurrent.id,
+        adminCode: code,
+        answer: text,
+        submittedAt: new Date().toISOString()
+      });
+      if (r.ok === true) {
+        $("ansText").value = "";
+        $("ansCount").textContent = "0";
+        $("ansCode").value = "";
+        ansNotice("تم استلام إجابة الدكتور.", "ok");
+      } else if (r.error === "unauthorized") {
+        $("err-ansCode").textContent = r.message || "الرقم السري غير صحيح.";
+      } else {
+        ansNotice(r.message || "ماقدرناش نستلم الإجابة. جرّب تاني.", "error");
+      }
+    } catch (err) {
+      ansNotice(errText(err), "error");
+    } finally {
+      btn.disabled = false; btn.textContent = "إرسال";
+    }
+  });
+
+  // ---------- أول تحميل ----------
+  if (adminCode) {
+    show("viewDash");
+    loadList();
+  } else {
+    show("viewLogin");
+  }
+})();
+</script>
+</body>
+</html>

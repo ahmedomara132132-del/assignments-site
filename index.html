@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تسليم الأسيجنمنت</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>تسليم الأسيجنمنت</h1>
+    <p>اكتب بياناتك وإجابتك ثم اضغط إرسال</p>
+  </header>
+
+  <div id="demoBanner" class="banner demo">وضع تجريبي: الإرسال هنا مش بيروح لأي سيرفر.</div>
+
+  <div id="viewLoading" class="card center">جاري التحميل...</div>
+
+  <div id="viewMessage" class="card" hidden>
+    <p id="messageText"></p>
+    <button type="button" class="btn small" id="messageRetry" hidden>حاول تاني</button>
+  </div>
+
+  <div id="viewList" class="card" hidden>
+    <h2>الأسيجنمنتات المطلوبة</h2>
+    <div id="list"></div>
+  </div>
+
+  <div id="viewForm" class="card" hidden>
+    <div class="topbar">
+      <a id="backLink" class="link-btn" href="./" hidden>← كل الأسيجنمنتات</a>
+    </div>
+
+    <form id="form" novalidate>
+      <div class="question">
+        <small id="aTitle">السؤال</small>
+        <strong id="questionText" dir="auto"></strong>
+        <div class="hint" id="deadlineNote"></div>
+      </div>
+
+      <div id="errorBanner" class="banner error" role="alert">
+        <span id="errorText"></span>
+        <div id="retryWrap" hidden><button type="button" class="btn small danger" id="retryBtn">حاول تاني</button></div>
+      </div>
+
+      <div class="field">
+        <label for="fullName">الاسم ثلاثي على الأقل</label>
+        <input id="fullName" name="fullName" type="text" autocomplete="name" placeholder="مثال: أحمد محمد علي">
+        <p class="err" id="err-fullName"></p>
+      </div>
+
+      <div class="field">
+        <label for="nationalId">الرقم القومي</label>
+        <input id="nationalId" name="nationalId" type="text" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="14 رقم">
+        <p class="err" id="err-nationalId"></p>
+      </div>
+
+      <div class="field">
+        <label for="answer">الإجابة</label>
+        <textarea id="answer" name="answer" placeholder="اكتب إجابتك هنا..."></textarea>
+        <div class="counter"><span id="count">0</span> / <span id="max"></span></div>
+        <p class="err" id="err-answer"></p>
+      </div>
+
+      <button type="submit" class="btn" id="submitBtn">إرسال</button>
+    </form>
+
+    <div id="success" class="success" role="status" hidden>
+      <div class="tick">✓</div>
+      <h2>تم استلام إجابتك</h2>
+      <p id="successName"></p>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+// ---- validators ----
+function toLatinDigits(s) {
+  return String(s)
+    .replace(/[٠-٩]/g, function (d) { return d.charCodeAt(0) - 0x0660; })
+    .replace(/[۰-۹]/g, function (d) { return d.charCodeAt(0) - 0x06F0; });
+}
+
+function validateName(raw) {
+  var name = String(raw).replace(/\s+/g, " ").trim();
+  if (!name) return { ok: false, msg: "اكتب اسمك." };
+  if (!/^[ء-يٱً-ْa-zA-Z ]+$/.test(name)) {
+    return { ok: false, msg: "الاسم لازم يكون حروف بس (عربي أو إنجليزي) من غير أرقام أو رموز." };
+  }
+  var words = name.split(" ");
+  if (words.length < 3) return { ok: false, msg: "اكتب الاسم ثلاثي على الأقل." };
+  for (var i = 0; i < words.length; i++) {
+    if (words[i].length < 2) return { ok: false, msg: "كل اسم لازم يكون حرفين على الأقل." };
+  }
+  return { ok: true, value: name };
+}
+
+var GOV_CODES = [1,2,3,4,11,12,13,14,15,16,17,18,19,21,22,23,24,25,26,27,28,29,31,32,33,34,35,88];
+
+function validateNationalId(raw) {
+  var s = toLatinDigits(raw).replace(/\s+/g, "");
+  if (!s) return { ok: false, msg: "اكتب الرقم القومي." };
+  if (!/^\d+$/.test(s)) return { ok: false, msg: "الرقم القومي أرقام بس." };
+  if (s.length !== 14) return { ok: false, msg: "الرقم القومي لازم يكون 14 رقم (انت كتبت " + s.length + ")." };
+
+  var century = s.charAt(0);
+  if (century !== "2" && century !== "3") return { ok: false, msg: "الرقم القومي غير صحيح، لازم يبدأ بـ 2 أو 3." };
+  var year = (century === "2" ? 1900 : 2000) + parseInt(s.substr(1, 2), 10);
+  var month = parseInt(s.substr(3, 2), 10);
+  var day = parseInt(s.substr(5, 2), 10);
+  var d = new Date(Date.UTC(year, month - 1, day));
+  var validDate = d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+  if (!validDate || d.getTime() > Date.now()) {
+    return { ok: false, msg: "تاريخ الميلاد داخل الرقم القومي غير صحيح." };
+  }
+  var gov = parseInt(s.substr(7, 2), 10);
+  if (GOV_CODES.indexOf(gov) === -1) return { ok: false, msg: "كود المحافظة داخل الرقم القومي غير صحيح." };
+
+  return { ok: true, value: s };
+}
+
+function validateAnswer(raw, min, max) {
+  var text = String(raw).trim();
+  if (!text) return { ok: false, msg: "اكتب إجابتك." };
+  if (text.length < min) return { ok: false, msg: "الإجابة قصيرة جدًا (على الأقل " + min + " حرف)." };
+  if (text.length > max) return { ok: false, msg: "الإجابة طويلة جدًا (الحد الأقصى " + max + " حرف)." };
+  return { ok: true, value: text };
+}
+// ---- end validators ----
+
+(function () {
+  if (typeof document === "undefined") return;
+
+  var CFG = window.APP_CONFIG, Api = window.Api, h = window.h, fmtDate = window.fmtDate;
+  var $ = function (id) { return document.getElementById(id); };
+  var params = new URLSearchParams(location.search);
+  var current = null;
+
+  var form = $("form"), submitBtn = $("submitBtn");
+  var fields = { fullName: $("fullName"), nationalId: $("nationalId"), answer: $("answer") };
+
+  $("max").textContent = CFG.MAX_ANSWER;
+  if (Api.demo) $("demoBanner").classList.add("show");
+
+  var VIEWS = ["viewLoading", "viewMessage", "viewList", "viewForm"];
+  function show(view) { VIEWS.forEach(function (v) { $(v).hidden = v !== view; }); }
+
+  function message(text, retry) {
+    $("messageText").textContent = text;
+    $("messageRetry").hidden = !retry;
+    show("viewMessage");
+  }
+  $("messageRetry").addEventListener("click", function () { location.reload(); });
+
+  function isClosed(a) { return !!a.deadline && Date.now() > new Date(a.deadline).getTime(); }
+  function homeHref() { return Api.demo ? "./?demo=1" : "./"; }
+  function assignmentHref(id) { return "?a=" + encodeURIComponent(id) + (Api.demo ? "&demo=1" : ""); }
+
+  // ---------- قايمة الأسيجنمنتات ----------
+  function renderList(items) {
+    var box = $("list");
+    box.textContent = "";
+    if (!items.length) {
+      box.appendChild(h("p", { class: "empty", text: "مفيش أسيجنمنتات مطلوبة دلوقتي." }));
+    }
+    items.forEach(function (a) {
+      var closed = isClosed(a);
+      var kids = [h("h3", { text: a.title || "أسيجنمنت" })];
+      if (a.deadline) kids.push(h("div", { class: "meta", text: (closed ? "انتهى الموعد: " : "آخر موعد: ") + fmtDate(a.deadline) }));
+      kids.push(h("div", { class: "actions" }, [
+        closed ? h("span", { class: "meta", text: "التسليم مقفول" })
+               : h("a", { class: "btn small", href: assignmentHref(a.id), text: "ابدأ الحل" })
+      ]));
+      box.appendChild(h("div", { class: "item" + (closed ? " closed" : "") }, kids));
+    });
+    show("viewList");
+  }
+
+  // ---------- صفحة الفورم ----------
+  function openAssignment(a) {
+    current = a;
+    document.title = (a.title ? a.title + " | " : "") + "تسليم الأسيجنمنت";
+    $("aTitle").textContent = a.title || "السؤال";
+    $("questionText").textContent = a.question || "";
+    $("backLink").hidden = !Api.enabled;
+    $("backLink").setAttribute("href", homeHref());
+
+    var closed = isClosed(a);
+    $("deadlineNote").textContent = a.deadline
+      ? (closed ? "انتهى موعد التسليم (" : "آخر موعد للتسليم: ") + fmtDate(a.deadline) + (closed ? ")" : "")
+      : "";
+    submitBtn.disabled = closed;
+    if (closed) showError("انتهى موعد تسليم الأسيجنمنت ده.", false);
+    show("viewForm");
+  }
+
+  async function init() {
+    show("viewLoading");
+    var id = params.get("a");
+    try {
+      if (id) {
+        if (!Api.enabled) {
+          if (id === CFG.DEFAULT_ASSIGNMENT.id) return openAssignment(CFG.DEFAULT_ASSIGNMENT);
+          return message("الأسيجنمنت ده مش موجود.", false);
+        }
+        var r = await Api.call({ action: "getAssignment", id: id });
+        if (r.ok !== true || !r.assignment) return message(r.message || "الأسيجنمنت ده مش موجود أو التسليم اتقفل.", false);
+        return openAssignment(r.assignment);
+      }
+      if (!Api.enabled) return openAssignment(CFG.DEFAULT_ASSIGNMENT);
+      var l = await Api.call({ action: "listAssignments" });
+      if (l.ok !== true || !Array.isArray(l.assignments)) throw new Error("BAD_RESPONSE");
+      renderList(l.assignments);
+    } catch (e) {
+      message("مقدرناش نحمّل الأسيجنمنتات. اتأكد من النت وجرّب تاني.", true);
+    }
+  }
+
+  // ---------- التحقق والإرسال ----------
+  function setError(name, msg) {
+    $("err-" + name).textContent = msg || "";
+    if (msg) fields[name].setAttribute("aria-invalid", "true");
+    else fields[name].removeAttribute("aria-invalid");
+  }
+
+  function check(name) {
+    var r;
+    if (name === "fullName") r = validateName(fields.fullName.value);
+    else if (name === "nationalId") r = validateNationalId(fields.nationalId.value);
+    else r = validateAnswer(fields.answer.value, CFG.MIN_ANSWER, CFG.MAX_ANSWER);
+    setError(name, r.ok ? "" : r.msg);
+    return r;
+  }
+
+  ["fullName", "nationalId", "answer"].forEach(function (n) {
+    fields[n].addEventListener("blur", function () { if (fields[n].value) check(n); });
+    fields[n].addEventListener("input", function () {
+      if (fields[n].getAttribute("aria-invalid")) check(n);
+    });
+  });
+  fields.answer.addEventListener("input", function () { $("count").textContent = fields.answer.value.length; });
+
+  function showError(msg, withRetry) {
+    $("errorText").textContent = msg;
+    $("retryWrap").hidden = !withRetry;
+    $("errorBanner").classList.add("show");
+  }
+  function hideError() { $("errorBanner").classList.remove("show"); }
+
+  async function submit() {
+    if (!current || isClosed(current)) return;
+    hideError();
+    var results = { fullName: check("fullName"), nationalId: check("nationalId"), answer: check("answer") };
+    var firstBad = ["fullName", "nationalId", "answer"].find(function (n) { return !results[n].ok; });
+    if (firstBad) { fields[firstBad].focus(); return; }
+
+    var payload = {
+      action: "submit",
+      assignmentId: current.id,
+      fullName: results.fullName.value,
+      nationalId: results.nationalId.value,
+      answer: results.answer.value,
+      submittedAt: new Date().toISOString()
+    };
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = "جاري الإرسال...";
+    try {
+      var out = await Api.call(payload);
+      if (out.ok === false) {
+        showError(out.message || "الاسم أو الرقم القومي غير مسجلين عندنا. راجع بياناتك وحاول تاني.", false);
+        return;
+      }
+      form.hidden = true;
+      $("successName").textContent = payload.fullName;
+      $("success").hidden = false;
+    } catch (err) {
+      if (err.message === "NOT_CONFIGURED") {
+        showError("الموقع لسه مش جاهز لاستقبال الإجابات. كلّم الدكتور.", false);
+      } else if (err.name === "AbortError") {
+        showError("الإرسال أخد وقت طويل. اتأكد من النت وحاول تاني.", true);
+      } else {
+        showError("حصلت مشكلة في الإرسال. إجابتك لسه موجودة، اضغط حاول تاني.", true);
+      }
+    } finally {
+      submitBtn.textContent = "إرسال";
+      submitBtn.disabled = !!current && isClosed(current);
+    }
+  }
+
+  form.addEventListener("submit", function (e) { e.preventDefault(); submit(); });
+  $("retryBtn").addEventListener("click", submit);
+
+  init();
+})();
+</script>
+</body>
+</html>
